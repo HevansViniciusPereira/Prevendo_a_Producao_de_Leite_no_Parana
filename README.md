@@ -1,1 +1,3 @@
-# Prevendo_a_Producao_de_Leite_no_Parana
+# Prevendo a Produção de Leite no Paraná (Forecasting Milk Production in Parana State)
+
+Neste trabalho Everton Artuso e eu usamos séries temporais para tentar prever a produção de leite no estado Paraná. Ao invés de tratar o estado todo de uma única vez, nós consideramos a produção por mesorregiões, pois os perfis de produção são muito distintos e usamos técnicas de séries temporais e machine learning para tentar prever a produção para os próximos anos. Essas previsões poderiam ser norteadoras de políticas públicas para os municípios que tenham forte participação da indústria leteira e das famílias ligadas à atividade.
