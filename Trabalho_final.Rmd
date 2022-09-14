@@ -1,0 +1,1245 @@
+---
+title: "Prevendo a Produção de Leite no Paraná"
+author: "Everton Artuso e Hevans Vinícius Pereira"
+date: "06/06/2022"
+output:
+  #html_document: default
+    #df_print: paged
+  pdf_document: default
+#always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introdução
+
+O Brasil ocupa a quarta colocação em produção mundial de leite, participando com aproximadamente 5,1% da produção mundial, considerando os dados de 2016 (FAO, 2018; IBGE, 2018), conforme https://sindileiteparana.com.br/dados-do-setor/.
+
+A produção de leite do estado do Paraná alcançou recentemente o segundo lugar no ranking nacional, atrás apenas do estado de Minas Gerais e pouco a frente do Rio Grande do Sul, com aproximadamente 4,4 bilhões de litros por ano, e representa a cadeia produtiva mais importante no contexto da agricultura familiar no estado. Em 10 anos, de 2008 a 2018, a produção no estado se elevou em 55% e alcançou tal marca com quase 1,4 milhões de vacas ordenhadas, de acordo com https://www.idrparana.pr.gov.br/Pagina/Bovinocultura-de-Leite.
+
+A produtividade e a renda dos produtores tem sido continuamente aumentadas, o que é muito importante uma vez que o leite é a principal fonte de renda de uma parcela significativa das famílias que atuam no ramo. Tais feitos tem sido alcançados graças a investimentos contínuos em equipamentos, melhoramento genético, fertilização do solo e otimização de processos, além da capacitação profissional oferecida pelo extensionismo rural através da Emater e prefeituras municipais.
+
+Optamos por utilizar dados coletados no banco do IPEADATA, e para diferenciarmos um pouco nossa análise das mais frequentemente realizadas, escolhemos trabalhar com o agrupamento da produção por mesorregiões (ver Figura 1). O Paraná conta com dez mesorregiões geográficas, cada uma com suas particularidades e desafios específicos. Entre as mesorregiões com maior crescimento nos últimos anos presentes nos dados apresentados, destacam-se as mesorregiões Sudoeste e Oeste do estado (ver Figura 2) e, por conta disso, nos concentraremos na análise de modelos de séries temporais para essas mesorregiões específicas.
+
+
+```{r, echo=FALSE, out.width="60%", fig.cap="Mesorregiões do Paraná. Fonte: http://www.baixarmapas.com.br/mapa-do-parana-mesorregioes/", fig.align='center'}
+knitr::include_graphics("mesorregioes.png")
+```
+
+
+```{r, echo=FALSE, out.width="60%", fig.cap="Produção por Mesorregião. Fonte: https://www.redalyc.org/journal/5520/552068861021/html/", fig.align='center'}
+knitr::include_graphics("producao.png")
+```
+
+
+O banco de dados disponível no site do IPEADATA conta com dados de produção leiteira anuais de 1974 a 2016 e pode ser acessado em http://www.ipeadata.gov.br/Default.aspx -> Regional -> Temas -> Agropecuária -> Produção - leite - quantidade (anual) podem ser escolhidas as mesorregiões do estado do Paraná, além da janela de tempo de interesse.
+
+
+
+# Modelagem com Séries Temporais
+
+
+## Análise Preliminar 
+
+Carregando os pacotes que serão usados ao longo do trabalho:
+
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(ggfortify)
+library(cowplot)
+library(patchwork)
+library(forecast)
+library(TSstudio)
+library(plotly)
+library(h2o)
+library(reshape2)
+```
+
+
+Vamos importar os dados e fazer alguns pequenos tratamentos para que possamos utilizá-los depois.
+
+
+```{r}
+leite_mesorregioes <- read_excel('F:/Dropbox/SeriesTemporais/ipeadata_leite.xls')
+#leite_mesorregioes <- read_excel('/home/everton/Dropbox/Share/SeriesTemporais/ipeadata_leite.xls')
+
+# eliminando colunas irrelevantes
+leite_meso <- leite_mesorregioes[,-c(1:3)]
+
+# transpondoo dataframe
+leite_meso <- t(leite_meso)
+
+# arrumando o indice
+rownames(leite_meso) <- NULL 
+
+# nomeando as colunas
+colnames(leite_meso) <- c('NO','CO','NC','NP','CE','O','SO','CS','SE','MC')
+
+# convertendo para dataframe
+leite_meso <- as.data.frame(cbind(Ano = c(1974:2016), leite_meso))
+
+# visualizando o formato final dos dados
+head(leite_meso)
+```
+
+
+Agora que os dados estão prontos, podemos visualizar a produção de leite por mesorregião.
+
+
+```{r, fig.dim=c(8,4), echo=FALSE}
+ggplot(leite_meso) +
+  geom_line(aes(x=Ano, y=NO, color = 'NO')) +
+  geom_line(aes(x=Ano, y=CO, color = 'CO')) +
+  geom_line(aes(x=Ano, y=NC, color = 'NC')) +
+  geom_line(aes(x=Ano, y=NP, color = 'NP')) +
+  geom_line(aes(x=Ano, y=CE, color = 'CE')) +
+  geom_line(aes(x=Ano, y=O, color = 'O')) +
+  geom_line(aes(x=Ano, y=SO, color = 'SO')) +
+  geom_line(aes(x=Ano, y=CS, color = 'CS')) +
+  geom_line(aes(x=Ano, y=SE, color = 'SE')) +
+  geom_line(aes(x=Ano, y=MC, color = 'MC')) + 
+  labs(title = "Produção de Leite no Paraná", x="Anos", y="mil Litros")
+```
+
+
+
+```{r, fig.dim=c(8,4), results=FALSE, echo=FALSE}
+plotNO <- ggplot(leite_meso, aes(x=Ano, y=NO)) +
+  geom_line(color="#70b3a2") +
+  labs(title = "NO", x="Anos", y="mil Litros")
+
+plotCO <- ggplot(leite_meso, aes(x=Ano, y=CO)) +
+  geom_line(color="#71b3a2") +
+  labs(title = "CO", x="Anos", y="mil Litros")
+#cowplot::plot_grid(plotNO, plotCE, labels = "AUTO")
+#plotNO + plotCO
+
+plotNC <- ggplot(leite_meso, aes(x=Ano, y=NC)) +
+  geom_line(color="#72b3a2") +
+  labs(title = "NC", x="Anos", y="mil Litros")
+
+plotNP <- ggplot(leite_meso, aes(x=Ano, y=NP)) +
+  geom_line(color="#73b3a2") +
+  labs(title = "NP", x="Anos", y="mil Litros")
+#plotNC + plotNP
+
+plotCE <- ggplot(leite_meso, aes(x=Ano, y=CE)) +
+  geom_line(color="#74b3a2") +
+  labs(title = "CE", x="Anos", y="mil Litros")
+
+plotO <- ggplot(leite_meso, aes(x=Ano, y=O)) +
+  geom_line(color="#75b3a2") +
+  labs(title = "O", x="Anos", y="mi Litros")
+#plotCE + plotO
+
+plotSO <- ggplot(leite_meso, aes(x=Ano, y=SO)) +
+  geom_line(color="#76b3a2") +
+  labs(title = "SO", x="Anos", y="mil Litros")
+
+plotCS <- ggplot(leite_meso, aes(x=Ano, y=CS)) +
+  geom_line(color="#77b3a2") +
+  labs(title = "CS", x="Anos", y="mil Litros")
+#plotSO + plotCS
+
+plotSE <- ggplot(leite_meso, aes(x=Ano, y=SE)) +
+  geom_line(color="#78b3a2") +
+  labs(title = "SE", x="Anos", y="mil Litros")
+
+plotMC <- ggplot(leite_meso, aes(x=Ano, y=MC)) +
+  geom_line(color="#79b3a2") +
+  labs(title = "MC", x="Anos", y="mil Litros")
+#plotSE + plotMC
+```
+
+Claramente, as regiões Oeste e Sudoeste do estado concentram boa parte da produção total. Vamos nos ater a produção e a série histórica destas duas principais regiões.
+
+
+## Região Sudoeste
+
+Começando pela região sudoeste, à qual corresponde o gráfico a seguir:
+
+```{r, fig.dim=c(8,4), echo=FALSE} 
+plotSO
+``` 
+
+
+Podemos observar que até meados dos anos 90 a produção de leite na região sudoeste do Paraná tinha um comportamento e que após 1997 a produção teve uma elevação bastante considerável. Não sabemos exatamente quais variáveis influenciaram no aumento da produção, mas é provável que o aumento do poder de compra do brasileiro nos anos 2000 tenha tido alguma influência.
+
+
+Podemos ajustar um modelo linear para ter uma noção da tendência apresentada pela série.
+
+
+```{r, fig.dim=c(8,4), echo=FALSE}
+sudoeste <- leite_meso$SO
+trend1 <- lm(sudoeste ~ leite_meso$Ano)
+ggplot(leite_meso, aes(x=Ano, y=SO)) +
+  geom_line(color="#76b3a2") +
+  labs(title = "Produção de Leite na Região Sudoeste do PR", x="Anos", y="mil Litros") +
+  geom_smooth(method='lm', formula=y~x, se=FALSE) 
+```
+
+
+Executando o comando `auto.arima`, podemos investigar um primeiro modelo, ARIMA não sazonal, candidato a modelar o comportamento da série histórica.
+
+
+```{r, fig.dim=c(8,4)}
+auto.arima(sudoeste, seasonal = FALSE)
+``` 
+
+
+Obtemos um modelo ARIMA(0,2,1), ou seja, o modelo sugere que tomemos duas diferenças para eliminar a tendência e o que nos restará será um modelo de médias móveis de primeira ordem estacionário, o qual pode ser escrito como
+
+\[ (1-B)^2 x_t = (1-0,84B)\varepsilon_t,  \]
+
+em que $B$ é o operador _lag_ e $\varepsilon_t$ é o erro.
+
+
+De fato, a tendência é eliminada após a segunda diferença, conforme gráficos a seguir.
+
+
+```{r, results=FALSE, fig.dim=c(8,4)}
+seq1 <- 1:42
+dif1 <- diff(sudoeste)
+trend2 <- lm(formula = dif1 ~ seq1, data=as.data.frame(dif1))
+seq2 <- 1:41
+dif2 <- diff(dif1)
+trend3 <- lm(formula = dif2 ~ seq2, data = as.data.frame(dif2))
+par(mfrow=c(1,2))
+ts.plot(dif1, ylab='mil Litros', xlab='Ano', main='Primeira Diferença') +
+  abline(trend2, col = 'red') 
+ts.plot(dif2, ylab='mil Litros', xlab='Ano', main='Segunda Diferença') +
+  abline(trend3, col = 'red')
+```
+
+
+Avaliando os resíduos para a segunda diferença, temos os seguintes gráficos:
+
+
+```{r, results=FALSE, fig.dim=c(10,4), echo=FALSE}
+par(mfrow=c(1,2))
+acf(dif2, ylab='', main='ACF')
+pacf(dif2, ylab='', main='PACF')
+``` 
+
+
+A função de autocorrelação apresentou valor significativo para ordem um, o que indica um modelo de médias móveis de ordem 1. Por outro lado, a função de autocorrelação parcial apresentou valor significativo até ordem 3, o que indica um modelo autorregressivo de ordem 3, informação que difere daquela dada pelo modelo sugerido por auto.arima (AR(0) e MA(1)). Por conta disso, vamos comparar com o modelo ARIMA(3,2,1).
+
+Comecemos analisando um modelo ARIMA(0,2,1) para os dados originais.
+
+
+```{r, warning=FALSE}
+arima(x = sudoeste, order = c(0,2,1), xreg = time(sudoeste))
+``` 
+
+
+Podemos comparar com um modelo ARIMA(3,0,1) para a segunda diferença.
+
+
+```{r}
+arima(x = dif2, order = c(3,0,1), xreg = time(dif2))
+```
+
+
+Podemos ver que os valores de AIC e de `log likelihood` são muito próximos, indicando que qualquer um dos dois modelos estaria adequado. Portanto, podemos seguir com o modelo mais simples que é ARIMA(0,2,1).
+
+
+Mas, analisando o gráfico da segunda diferença (anteriormente apresentado), é possível ver que a variância não é constante e isto indica que devemos fazer alguma mudança antes de considerar modelos AR, MA ou ARMA pois estes supõe série estacionária, ou considerar modelos diferentes. 
+
+### Modelos de Médias Móveis
+
+Vamos separar apenas os dados da região sudoeste e converter os dados para o formato de séries temporais reconhecido pelo R.
+
+
+```{r}
+leite_SO <- leite_meso[,c('Ano','SO')]
+leite_SO <- ts(leite_SO$SO, start=leite_SO$Ano[1], frequency = 1)
+```
+
+
+Agora, vamos criar uma função que retorna a série com n lags.
+
+
+```{r}
+lags <- function(serie, n){
+  ts_merged <- NULL
+  
+  # Criando n lags
+  for(i in 1:n){
+    ts_merged <- ts.union(ts_merged, stats::lag(serie, k = -i))
+  }
+  
+  # Unindo os lags com a série original
+  ts_merged <- ts.union(serie, ts_merged)
+  
+  # Nomeando as colunas
+  colnames(ts_merged) <- c("y", paste0("y_", 1:i))
+  
+  # Removendo valores ausentes criados nos lags
+  ts_merged <- window(ts_merged,
+                      start = start(serie) + n,
+                      end = end(serie))
+  return(ts_merged)
+}
+```
+
+
+Vamos também criar uma função que calcula a média aritmética simples de uma série com n lags.
+
+```{r}
+ts_mean <- function(serie){
+  ts_avg <- ts_sum(serie) / dim(serie)[2]
+  return(ts_avg)
+}
+```
+
+
+Por fim, vamos combinar as duas funções anteriores para criar uma função que retorna uma série suavizada.
+
+
+```{r}
+sma <- function(serie, ordem){
+  l <- ordem - 1
+  l <- lags(serie = serie, n = l)
+  m <- ts_mean(l)
+  u <- ts.union(serie, m)
+  colnames(u) <- c("original", "transformada")
+  return(u)
+}
+```
+
+Vamos criar uma série do tipo MA com média simples e ordem 3.
+
+```{r}
+sma_3 <- sma(leite_SO, ordem = 3)
+```
+
+Podemos plotar a série original e a série suavizada para observamos as diferenças.
+
+
+```{r, fig.dim=c(8,4), warning=FALSE, echo=FALSE}
+df <- cbind(leite_meso[,c('Ano','SO')],
+            SMA = as.vector(sma_3[,2]))
+colnames(df) <- c('Ano','Original','Média Móvel')
+
+data_long <- melt(df, id.vars = "Ano")
+colnames(data_long) <- c('Ano','Valores','mil_Litros')
+
+ggplot(data_long,
+       aes(x = Ano,
+           y = mil_Litros,
+           col = Valores)) +
+  geom_line()
+```
+
+
+
+Poderíamos usar esta estratégia para reduzir efeitos sazonais, mas no nosso caso não há tais efeitos visto que os valores analisados são anuais.
+
+
+### Forecasting
+
+Para fazer previsões precisamos separar nossos dados em dois conjuntos, um deles (treino) serve para criar o modelo e o outro (teste) serve para ver se nosso modelo está realmente acertando as previsões.
+
+Essa separação pode ser feita de maneira simples no R. Vamos deixar os últimos 12 valores para teste.
+
+
+```{r}
+treino <- window(leite_SO,
+                start = time(leite_SO)[1],
+                end = time(leite_SO)[length(leite_SO) - 12])
+
+teste <- window(leite_SO,
+                start = time(leite_SO)[length(leite_SO) - 12 + 1],
+                end = time(leite_SO)[length(leite_SO)])
+```
+
+
+Podemos criar o modelo usando novamente a função `auto.arima`, mas agora considerando apenas o conjunto de treino.
+
+
+```{r}
+md <- auto.arima(treino)
+md
+```
+
+
+Podemos ver que o modelo sugerido foi ARIMA(0,2,0) diferente do modelo sugerido quando se considerava toda a série. Esta indicação sugere que há uma forte componente linear na série de treino.
+
+
+Podemos verificar os resíduos para ver a qualidade do ajuste do modelo.
+
+
+```{r, fig.dim=c(8,4), echo=FALSE}
+checkresiduals(md)
+```
+
+
+Observa-se que os resíduos apresentam média zero e variância constante, a não ser por uma pequena região entre os anos de 1995 e 2000. Em conjunto com a ACF e a distribuição dos resíduos, parece que o modelo tem um bom ajuste.
+
+
+Também foi apresentado o teste de Ljung-Box. Este é um tipo de teste estatístico para verificar se há alguma autocorrelação da série diferente de zero. Podemos ver que temos um p-valor de 0.05577 e isso indica que não podemos rejeitar a hipótese nula a um nível de 5% de significância.
+Em outras palavras, pelo teste de Ljung-Box podemos afirmar com 95% de confiança que a auto correlação entre todos os lags é nula, o que está de acordo com o plot da ACF apresentado. O teste de Ljung-Box é uma maneira mais formal de confirmar o que o ACF estava sugerindo.
+
+
+Vamos usar o modelo treinado para fazer previsões para as 12 observações deixadas como teste e, então, avaliar a performance do modelo.
+
+
+Podemos fazer as previsões para o conjunto de teste.
+
+```{r}
+forecast_arima020 <- as.data.frame(forecast(md, h=12))[,1]
+```
+
+
+Vamos calcular algumas métricas para ver a performance do modelo no conjunto de treino e de teste.
+
+
+```{r}
+fc <- forecast(md, h = 12)
+accuracy(fc, teste)
+```
+
+
+O erro no conjunto de teste ser maior que no conjunto de treino é algo natural. Podemos também observar graficamente o desempenho do modelo nos dois conjuntos.
+
+
+```{r, fig.dim=c(10,4), echo=FALSE}
+test_forecast(actual = leite_SO,
+              forecast.obj = fc,
+              test = teste)
+```
+
+
+Para entender se os erros obtidos são altos, precisamos comparar com outros modelos comumente usados ou considerados satisfatórios. Ao longo deste trabalho apresentaremos mais modelos e, ao final, iremos comparar todos para ver qual tem melhor capacidade preditiva.
+
+
+Após selecionar o melhor modelo, em geral, ele é treinado novamente, mas usando toda a série e, assim, pode-se tentar prever valores futuros. Vamos ilustrar esse procedimento com o modelo em questão e tentar prever cinco valores futuros.
+
+
+```{r}
+md_final <- auto.arima(leite_SO)
+fc_final <- forecast(md_final, h = 5)
+```
+
+
+Podemos observar melhor as previsões no gráfico a seguir.
+
+
+```{r, fig.dim=c(10,5), echo=FALSE}
+plot_forecast(fc_final,
+              title = "Prevendo a Produção de Leite no Paraná",
+              Xtitle = "Ano",
+              Ytitle = "mil Litros")
+```
+
+
+
+Outra maneira de observar a variação das predições é fazendo simulações de possíveis caminhos. Vamos criar 100 simulações que vão tentar prever os próximos 12 anos.
+
+
+```{r, fig.dim=c(10,5)}
+fc_final3 <- forecast_sim(model=md_final, h=12, n=100)
+
+fc_final3_plotly <- fc_final3$plot %>%
+            layout(title = "Produção de Leite do Paraná - Simulando previsões",
+                   yaxis = list(title = "mil Litros"),
+                   xaxis = list(title = "Ano"))
+fc_final3_plotly
+```
+
+
+Uma maneira mais robusta de tentar obter o melhor modelo é treinar vários modelos com o conjunto de treino e avaliá-los com relação a suas performances no conjunto de teste, para então determinar qual foi o melhor. O pacote `TSstudio` conduz todo o processo de treino, teste, avaliação e forecasting.
+
+
+Vamos testar os modelos `arima` para ARIMA e `ets` para Exponential Smoothing State Space com diferentes parâmetros.
+
+
+
+```{r}
+methods <- list(ets1 = list(method = "ets",
+                            method_arg = list(opt.crit = "lik"),
+                            notes = "ETS model with opt.crit = lik"),
+                ets2 = list(method = "ets",
+                            method_arg = list(opt.crit = "amse"),
+                            notes = "ETS model with opt.crit = amse"),
+                arima1 = list(method = "arima",
+                              method_arg = list(order = c(0,2,1)),
+                              notes = "ARIMA(0,2,1)"))
+```
+
+Vamos treinar e comparar os modelos.
+
+```{r}
+md <- train_model(input = leite_SO,
+                  methods = methods,
+                  train_method = list(partitions = 6, 
+                                      sample.out = 12, 
+                                      space = 3),
+                  horizon = 5,
+                  error = "MAPE")
+```
+
+
+Podemos ver que o modelo ARIMA foi o melhor, pois apresentou menores erros.
+
+Podemos ver como cada modelo se comporta conforme a janela vai avançando (apenas para `html`).
+
+
+```{r, echo=FALSE}
+plot_model(md)
+```
+
+
+### Forecasting com Modelos de Médias Móveis
+
+
+Vamos criar uma função que possa fazer previsões usando modelos de médias móveis.
+
+
+```{r}
+sma_forecast <- function(df, h, m, w = NULL){
+  
+  # Configurando os pesos da média
+  if(is.null(w)){
+    w <- rep(1/m, m)
+  }
+  
+  # Mudando o nome da coluna de data no dataframe
+  names(df)[1] <- "date"
+  
+  # Separando os dados em treino e teste de acordo com o horizonte de previsão
+  df$type <- c(rep("train", nrow(df) - h), rep("test", h))
+  df1 <- df %>% spread(key = type, value = y)
+  
+  # Criar a variável alvo
+  df1$yhat <- df1$train
+  
+  # função de média móvel simples
+  for(i in (nrow(df1) - h + 1):nrow(df1)){
+    r <- (i-m):(i-1)
+    df1$yhat[i] <- sum(df1$yhat[r] * w)
+  }
+  
+  # descartando os valores reais do yhat que foram usadas na janela móvel
+  df1$yhat <- ifelse(is.na(df1$test), NA, df1$yhat)
+  df1$y <- ifelse(is.na(df1$test), df1$train, df1$test)
+  return(df1)
+}
+```
+
+
+Vamos transformar os dados para o formato de dataframe e calcular a média móvel para fazer previsões para um intervalo de cinco anos. Usaremos média móvel com apenas uma observação e com seis observações, apenas a título de ilustração.
+
+
+```{r}
+leite_SO_df <- ts_to_prophet(leite_SO)
+leite_SO_m1 <- sma_forecast(leite_SO_df, h = 5, m = 1)
+leite_SO_m6 <- sma_forecast(leite_SO_df, h = 5, m = 6)
+```
+
+
+Vamos plotar as previsões.
+
+
+```{r, fig.dim=c(10,5), echo=FALSE}
+plot_ly(data = leite_SO_df[1:43,], x = ~ ds, y = ~ y,
+        type = "scatter", mode = "lines",
+        name = "Observado") %>%
+  add_lines(x = leite_SO_m1$Ano, y = leite_SO_m1$yhat,
+            name = "SMA - 1", line = list(dash = "dash")) %>%
+  add_lines(x = leite_SO_m6$Ano, y = leite_SO_m6$yhat,
+            name = "SMA - 6", line = list(dash = "dash"))
+```
+
+
+Podemos ver que modelos de médias móveis não são muito bons para forecasting no nosso caso, pois nossa série tem forte tendência de crescimento e não há sazonalidade.
+
+
+### Forecasting com Função de Holt
+
+
+O modelo de Holt extende a suavização exponencial simples para permitir a previsão de dados que possuem tendência, como no nosso caso. Este método envolve uma equação de previsão e duas equações de suavização (uma para o nível e outra para a tendência).
+
+
+Equação de previsão: $\hat{y}_{t+h|t} = l_t + hb_t$
+
+Equação de Nível: $l_t = \alpha y_t + (1 - \alpha)(l_{t-1} + b_{t-1})$
+
+Equação de Tendência: $b_t = \beta(l_t - l_{t-1}) + (1 - \beta) b_{t-1}$
+
+
+em que $l_t$ denota uma estimativa para o nível da série no tempo $t$, $b_t$ denota uma estimativa da tendência (inclinação) da série no tempo $t$, $0 \leq \alpha \leq 1$ é o parâmetro de suavização para nível e $0 \leq \beta \leq 1$ é o parâmetros de suavização para a tendência.
+
+
+A equação de nível mostra que $l_t$ é uma média ponderada da observação $y_t$ e de $l_{t-1} + b_{t-1}$ que é $\hat{y}_{t+1|t}$ (previsão de um passo a frente); enquanto que a equação de tendência mostra que $b_t$ é uma média ponderada da tendência estimada, no tempo $t$, de $l_t - l_{t-1}$ e $b_{t-1}$ (que é a tendência previamente estimada).
+
+
+Podemos usar o modelo de Holt com a função `holt` do R:
+
+
+```{r}
+fc_holt <- holt(treino, h = 12, initial = "optimal")
+fc_holt$model
+```
+
+
+Calculando a acurácia para este modelo:
+
+```{r}
+accuracy(fc_holt, teste)
+```
+
+
+Observando um gráfico com as previsões:
+
+
+```{r, fig.dim=c(8,4)}
+test_forecast(leite_SO, forecast.obj = fc_holt, test = teste)
+```
+
+
+Podemos adaptar o parâmetro exponencial do modelo de Holt para diminuir o crescimento exponencial das previsões e assim melhorar o modelo.
+
+
+```{r}
+fc_holt_exp <- holt(treino,
+                    h = 12,
+                    beta = 0.1,
+                    initial = "optimal",
+                    exponential = TRUE)
+```
+
+
+Podemos fazer as previsões para o conjunto de teste.
+
+```{r}
+forecast_holt <- as.data.frame(predict(fc_holt_exp, teste))[,1]
+```
+
+
+Vamos calcular a acurácia para o modelo de Holt com ajuste exponencial.
+
+
+```{r}
+accuracy(fc_holt_exp, teste)
+```
+
+
+Vamos plotar os gráfico com as previsões.
+
+
+```{r, fig.dim=c(8,4)}
+test_forecast(leite_SO, forecast.obj = fc_holt_exp, test = teste)
+```
+
+
+### Forecasting com Machine Learning
+
+
+Vamos utilizar o framework [h2o](https://www.h2o.ai/) para executar um AutoML e tentar encontrar algum modelo de machine learning para comparar com os modelos previamente apresentados. Usaremos AutoML pois o foco da disciplina não é nos modelos de Machine Learning, e faremos essa comparação apenas a título de curiosidade para comparar as performances e explorar diferentes técnicas que poderiam ser utilizadas.
+
+
+Após carregar o pacote h2o, precisamos inicializar o cluster que irá executar o processamento com o h2o.
+
+```{r, warning=FALSE, results=FALSE}
+h2o.init(max_mem_size = "4G")
+```
+
+
+Lembrando que vamos usar os dados de treino e de teste para treinar os modelos, conforme havíamos definido anteriormente.
+
+
+```{r, echo=FALSE}
+treino <- window(leite_SO,
+                start = time(leite_SO)[1],
+                end = time(leite_SO)[length(leite_SO) - 12])
+treino <- ts_to_prophet(treino)
+
+teste <- window(leite_SO,
+                start = time(leite_SO)[length(leite_SO) - 12 + 1],
+                end = time(leite_SO)[length(leite_SO)])
+teste <- ts_to_prophet(teste)
+```
+
+
+Mas precisamos converter os dados do formato dataframe para o formato utilizado pelo h2o que é um h2o cluster.
+
+
+```{r, warning=FALSE, results=FALSE}
+train_h <- as.h2o(treino)
+test_h <- as.h2o(teste)
+```
+
+
+Vamos usar o AutoML do h2o para testar vários modelos (random forest, GBM, redes neurais, entre outros) e obter o melhor dos modelos testados.
+
+
+```{r, results=FALSE, warning=FALSE}
+autoML1 <- h2o.automl(training_frame = train_h,
+                      x = 'ds',
+                      y = 'y',
+                      nfolds = 5,
+                      max_runtime_secs = 60*20,
+                      seed = 1234)
+```
+
+
+Podemos obter uma lista com o desempenho dos modelos.
+
+
+```{r}
+autoML1@leaderboard
+```
+
+
+Finalmente, podemos usar o melhor dos modelos para fazer previsões e assim comparar com os demais modelos testados ao longo do trabalho.
+
+
+```{r}
+test_h$pred_autoML <- h2o.predict(autoML1@leader, test_h)
+forecast_automl <- as.data.frame(test_h)
+mape_autoML <- mean(abs(forecast_automl$y - forecast_automl$pred_autoML) / forecast_automl$y)
+mape_autoML
+```
+
+
+Podemos também visualizar as performances.
+
+
+```{r}
+plot_ly(data = forecast_automl) %>%
+  add_lines(x = ~ ds, y = ~y, name = "Actual") %>%
+  add_lines(x = ~ ds, y = ~ pred_autoML, name = "autoML", line =
+list(dash = "dash")) %>%
+  layout(title = "Produção de Leite no Paraná - atual vs. Predita",
+         yaxis = list(title = "mil Litros"),
+         xaxis = list(title = "Ano"))
+```
+
+
+```{r}
+forecast_df <- data.frame('Ano'=c(2005:2016),
+                          'Real'=as.data.frame(teste),
+                          'Arima(0,2,0)'= forecast_arima020,
+                          'Holt' = forecast_holt,
+                          'AutoML' = forecast_automl)
+forecast_df <- forecast_df[,c(1,3,4,5,8)]
+forecast_df
+```
+
+
+Pode-se ver que nos primeiros anos (de 2005 a 2008) o modelo de rede neural foi melhor, mas depois há uma leve mudança no comportamento dos nossos dados e então outros modelos começar a fazer melhores previsões. Para entender qual dos modelos foi melhor, precisamos calcular algumas métricas em todo o conjunto de previsões.
+
+
+Vamos calcular o erro quadrático médio para comparar o modelo ARIMA(0,2,0), o modelo de Holt e o melhor modelo do AutoML.
+
+
+```{r, echo=FALSE}
+# Criando funções RMSE e MAE
+
+# RMSE
+rmse <- function(v1, v2){
+  sqrt(mean((v1 - v2)^2))
+}
+
+# MAE
+mae <- function(v1, v2){
+  sum(abs(v1 - v2))/length(v1)
+}
+```
+
+
+
+```{r}
+mae_vec <- c()
+rmse_vec <- c()
+for(i in 3:5){
+  mae_vec[i-2] <- mae(forecast_df$Real.y, forecast_df[,i])
+  rmse_vec[i-2] <- rmse(forecast_df$Real.y, forecast_df[,i])
+}
+
+metricas <- data.frame(mae_vec, rmse_vec)
+rownames(metricas) <- c('ARIMA(0,2,0)','Holt','AutoML')
+colnames(metricas) <- c('MAE','RMSE')
+metricas
+```
+
+
+Podemos ver que o modelo ARIMA(0,2,0) foi melhor no conjunto de teste. Vale ressaltar que temos poucos dados para essa série temporal e que se houvesse mais dados, outros modelos poderiam ter se saído melhor.
+
+
+## Região Oeste
+
+
+Agora vamos analisar a região oeste, à qual corresponde o gráfico a seguir:
+
+```{r, fig.dim=c(8,4), echo=FALSE} 
+plotO
+```
+
+
+Podemos observar que até o início dos anos 2000 a produção estava aumentando, mas após 2002 houve um salto muito maior. Os motivos que levaram a essa mudança de comportamento são provavelmente os mesmos que causaram a mudança de regime na região sudoeste.
+
+
+Vamos ajustar um modelo linear para ter uma noção da tendência apresentada pela série.
+
+
+```{r, fig.dim=c(8,4), echo=FALSE}
+oeste <- leite_meso$O
+trend1_O <- lm(oeste ~ leite_meso$Ano)
+ggplot(leite_meso, aes(x=Ano, y=O)) +
+  geom_line(color="#76b3a2") +
+  labs(title = "Produção de Leite na Região Oeste do PR", x="Anos", y="mil Litros") +
+  geom_smooth(method='lm', formula=y~x, se=FALSE) 
+```
+
+
+Executando o comando `auto.arima`, podemos investigar um primeiro modelo, ARIMA não sazonal, candidato a modelar o comportamento da série histórica.
+
+
+```{r, fig.dim=c(8,4)}
+auto.arima(oeste, seasonal = FALSE)
+``` 
+
+
+Obtemos um modelo ARIMA(0,2,1), ou seja, o modelo sugere que tomemos duas diferenças para eliminar a tendência e o que nos restará será um modelo de médias móveis de primeira ordem estacionário. Podemos escrevê-lo como
+
+\[ (1-B)^2 x_t = (1-0,86B)\varepsilon_t. \]
+
+De fato, a tendência é bastante reduzida após a segunda diferença, conforme gráficos a seguir.
+
+
+```{r, results=FALSE, fig.dim=c(8,4)}
+seq1 <- 1:42
+dif1_O <- diff(oeste)
+trend2_O <- lm(formula = dif1_O ~ seq1, data=as.data.frame(dif1_O))
+seq2 <- 1:41
+dif2_O <- diff(dif1_O)
+trend3_O <- lm(formula = dif2_O ~ seq2, data = as.data.frame(dif2_O))
+par(mfrow=c(1,2))
+ts.plot(dif1_O, ylab='mil Litros', xlab='Ano', main='Primeira Diferença') +
+  abline(trend2_O, col = 'red') 
+ts.plot(dif2_O, ylab='mil Litros', xlab='Ano', main='Segunda Diferença') +
+  abline(trend3_O, col = 'red')
+```
+
+Podemos observar que mesmo com a segunda diferença ainda há um pouco de tendência. Avaliando os resíduos para a segunda diferença, temos os seguintes gráficos:
+
+
+```{r, results=FALSE, fig.dim=c(10,4), echo=FALSE}
+par(mfrow=c(1,2))
+acf(dif2_O, ylab='', main='ACF')
+pacf(dif2_O, ylab='', main='PACF')
+``` 
+
+
+A função de autocorrelação apresentou valor significativo para ordem um, o que indica um modelo de médias móveis de ordem 1, assim como a função de autocorrelação parcial. Vamos avaliar o modelo ARIMA(1,0,1) para a segunda diferença.
+
+```{r}
+arima(x = dif2_O, order = c(1,0,1), xreg = time(dif2_O))
+```
+
+
+Analisando o gráfico da segunda diferença (anteriormente apresentado), é possível ver que a variância não é constante e isto indica que devemos fazer alguma mudança antes de considerar modelos AR, MA ou ARMA pois estes supõe série estacionária, ou considerar modelos diferentes. 
+
+
+### Modelos de Médias Móveis
+
+Vamos separar apenas os dados da região oeste e converter os dados para o formato de séries temporais reconhecido pelo R.
+
+
+```{r}
+leite_O <- leite_meso[,c('Ano','O')]
+leite_O <- ts(leite_O$O, start=leite_O$Ano[1], frequency = 1)
+```
+
+
+Vamos usar a função criada anteriormente para criar uma série do tipo MA com média simples e ordem 3.
+
+```{r}
+sma_3_O <- sma(leite_O, ordem = 3)
+```
+
+Podemos plotar a série original e a série suavizada para observamos as diferenças.
+
+
+```{r, fig.dim=c(8,4), warning=FALSE, echo=FALSE}
+df_O <- cbind(leite_meso[,c('Ano','O')],
+            SMA = as.vector(sma_3_O[,2]))
+colnames(df_O) <- c('Ano','Original','Média Móvel')
+
+data_long_O <- melt(df_O, id.vars = "Ano")
+colnames(data_long_O) <- c('Ano','Valores','mil_Litros')
+
+ggplot(data_long_O,
+       aes(x = Ano,
+           y = mil_Litros,
+           col = Valores)) +
+  geom_line()
+```
+
+
+Poderíamos usar esta estratégia para reduzir efeitos sazonais, mas no nosso caso não há tais efeitos visto que os valores analisados são anuais.
+
+
+### Forecasting
+
+Vamos considerar os dados de treino e teste, semelhante ao que já fizemos para a região sudoeste.
+
+
+```{r, echo=FALSE}
+treino_O <- window(leite_O,
+                start = time(leite_O)[1],
+                end = time(leite_O)[length(leite_O) - 12])
+
+teste_O <- window(leite_O,
+                start = time(leite_O)[length(leite_O) - 12 + 1],
+                end = time(leite_O)[length(leite_O)])
+```
+
+
+Vamos criar o modelo usando novamente a função `auto.arima`, mas agora considerando apenas o conjunto de treino.
+
+
+```{r}
+md_O <- auto.arima(treino_O)
+md_O
+```
+
+
+Podemos ver que o modelo sugerido foi ARIMA(1,2,0) diferente do modelo sugerido quando se considerava toda a série. Esta indicação sugere que há uma forte componente linear na série de treino.
+
+
+Podemos verificar os resíduos para ver a qualidade do ajuste do modelo.
+
+
+```{r, fig.dim=c(8,4), echo=FALSE}
+checkresiduals(md_O)
+```
+
+
+Observa-se que os resíduos apresentam média zero e variância constante. Em conjunto com a ACF e a distribuição dos resíduos, parece que o modelo tem um bom ajuste.
+
+
+O teste de Ljung-Box apresenta p-valor de 0.9659 e isto indica que não podemos rejeitar a hipótese nula a nível de 5% de significância.
+Em outras palavras, pelo teste de Ljung-Box, podemos afirmar com 95% de confiança que a auto correlação entre todos os lags é nula, o que está de acordo com o plot da ACF apresentado. O teste de Ljung-Box é uma maneira mais formal de confirmar o que o ACF estava sugerindo.
+
+
+Vamos usar o modelo treinado para fazer previsões para as 12 observações deixadas como teste e, então, avaliar a performance do modelo.
+
+
+Podemos fazer as previsões para o conjunto de teste.
+
+```{r}
+forecast_arima120 <- as.data.frame(forecast(md_O, h=12))[,1]
+```
+
+
+Vamos calcular algumas métricas para ver a performance do modelo no conjunto de treino e de teste.
+
+
+```{r}
+fc_O <- forecast(md_O, h = 12)
+accuracy(fc_O, teste_O)
+```
+
+
+O erro no conjunto de teste é muito maior do que no conjunto de treino, o que indica que o modelo não capturou adequadamente o padrão da série temporal. Podemos também observar graficamente o desempenho do modelo nos dois conjuntos.
+
+
+```{r, fig.dim=c(10,4), echo=FALSE}
+test_forecast(actual = leite_O,
+              forecast.obj = fc_O,
+              test = teste_O)
+```
+
+
+Vamos criar 100 simulações que vão tentar prever os próximos 12 anos.
+
+
+```{r, fig.dim=c(10,5)}
+fc_final3_O <- forecast_sim(model=md_O, h=12, n=100)
+
+fc_final3_O_plotly <- fc_final3_O$plot %>%
+            layout(title = "Produção de Leite do Paraná - Simulando previsões",
+                   yaxis = list(title = "mil Litros"),
+                   xaxis = list(title = "Ano"))
+fc_final3_O_plotly
+```
+
+
+Vamos testar os modelos `arima` para ARIMA e `ets` para Exponential Smoothing State Space com diferentes parâmetros.
+
+
+```{r}
+methods_O <- list(ets1 = list(method = "ets",
+                            method_arg = list(opt.crit = "lik"),
+                            notes = "ETS model with opt.crit = lik"),
+                ets2 = list(method = "ets",
+                            method_arg = list(opt.crit = "amse"),
+                            notes = "ETS model with opt.crit = amse"),
+                arima1 = list(method = "arima",
+                              method_arg = list(order = c(1,2,0)),
+                              notes = "ARIMA(1,2,0)"))
+```
+
+Vamos treinar e comparar os modelos.
+
+```{r}
+md_O <- train_model(input = leite_O,
+                  methods = methods_O,
+                  train_method = list(partitions = 6, 
+                                      sample.out = 12, 
+                                      space = 3),
+                  horizon = 5,
+                  error = "MAPE")
+```
+
+
+Podemos ver que o segundo modelo ets foi o melhor, pois apresenta menores erros.
+
+
+```{r, echo=FALSE}
+plot_model(md_O)
+```
+
+
+### Forecasting com Modelos de Médias Móveis
+
+
+Vamos transformar os dados para o formato de dataframe e calcular a média móvel para fazer previsões para um intervalo de cinco anos. Usaremos média móvel com apenas uma observação e com seis observaçõs, apenas a título de ilustração.
+
+
+```{r}
+leite_O_df <- ts_to_prophet(leite_O)
+leite_O_m1 <- sma_forecast(leite_O_df, h = 5, m = 1)
+leite_O_m6 <- sma_forecast(leite_O_df, h = 5, m = 6)
+```
+
+
+Vamos plotar as previsões.
+
+
+```{r, fig.dim=c(10,5), echo=FALSE}
+plot_ly(data = leite_O_df[1:43,], x = ~ ds, y = ~ y,
+        type = "scatter", mode = "lines",
+        name = "Observado") %>%
+  add_lines(x = leite_O_m1$Ano, y = leite_O_m1$yhat,
+            name = "SMA - 1", line = list(dash = "dash")) %>%
+  add_lines(x = leite_O_m6$Ano, y = leite_O_m6$yhat,
+            name = "SMA - 6", line = list(dash = "dash"))
+```
+
+
+Novamente podemos ver que modelos de médias móveis não são muito bons para forecasting no nosso caso, pois a série tem forte tendência de crescimento e não há sazonalidade.
+
+
+### Forecasting com Função de Holt
+
+
+Podemos usar o modelo de Holt com a função `holt` do R:
+
+
+```{r}
+fc_holt_O <- holt(treino_O, h = 12, initial = "optimal")
+fc_holt_O$model
+```
+
+
+Calculando a acurácia para este modelo, temos
+
+```{r}
+accuracy(fc_holt_O, teste_O)
+```
+
+
+Observando um gráfico com as previsões:
+
+
+```{r, fig.dim=c(8,4)}
+test_forecast(leite_O, forecast.obj = fc_holt_O, test = teste_O)
+```
+
+
+Podemos adaptar o parâmetro exponencial do modelo de Holt para diminuir o crescimento exponencial das previsões e assim melhorar o modelo.
+
+
+```{r}
+fc_holt_exp_O <- holt(treino_O,
+                    h = 12,
+                    beta = 0.03,
+                    initial = "optimal",
+                    exponential = TRUE)
+```
+
+
+Podemos fazer as previsões para o conjunto de teste.
+
+```{r}
+forecast_holt_O <- as.data.frame(predict(fc_holt_exp_O, teste_O))[,1]
+```
+
+
+Vamos calcular a acurácia para o modelo de Holt com ajuste exponencial.
+
+
+```{r}
+accuracy(fc_holt_exp_O, teste_O)
+```
+
+
+Vamos plotar os gráfico com as previsões.
+
+
+```{r, fig.dim=c(8,4)}
+test_forecast(leite_O, forecast.obj = fc_holt_exp_O, test = teste_O)
+```
+
+
+### Forecasting com Machine Learning
+
+
+Lembrando que vamos usar os dados de treino e de teste para treinar os modelos, conforme havíamos definido anteriormente.
+
+
+```{r, echo=FALSE}
+treino_O <- window(leite_O,
+                start = time(leite_O)[1],
+                end = time(leite_O)[length(leite_O) - 12])
+treino_O <- ts_to_prophet(treino_O)
+
+teste_O <- window(leite_O,
+                start = time(leite_O)[length(leite_O) - 12 + 1],
+                end = time(leite_O)[length(leite_O)])
+teste_O <- ts_to_prophet(teste_O)
+```
+
+
+Mas precisamos converter os dados do formato dataframe para o formato utilizado pelo h2o que é um h2o cluster.
+
+
+```{r, warning=FALSE, results=FALSE}
+train_h_O <- as.h2o(treino_O)
+test_h_O <- as.h2o(teste_O)
+```
+
+
+Vamos usar o AutoML do h2o.
+
+
+```{r, results=FALSE, warning=FALSE}
+autoML1_O <- h2o.automl(training_frame = train_h_O,
+                      x = 'ds',
+                      y = 'y',
+                      nfolds = 5,
+                      max_runtime_secs = 60*20,
+                      seed = 1234)
+```
+
+
+Podemos obter uma lista com o desempenho dos modelos.
+
+
+```{r}
+autoML1_O@leaderboard
+```
+
+
+Finalmente, podemos usar o melhor dos modelos para fazer previsões e assim comparar com os demais modelos testados ao longo do trabalho.
+
+
+
+```{r}
+test_h_O$pred_autoML <- h2o.predict(autoML1_O@leader, test_h_O)
+forecast_automl_O <- as.data.frame(test_h_O)
+mape_autoML_O <- mean(abs(forecast_automl_O$y - forecast_automl_O$pred_autoML) / forecast_automl_O$y)
+mape_autoML_O
+```
+
+
+Podemos também visualizar as performances.
+
+
+```{r}
+plot_ly(data = forecast_automl_O) %>%
+  add_lines(x = ~ ds, y = ~ y, name = "Atual") %>%
+  add_lines(x = ~ ds, y = ~ pred_autoML, name = "autoML", line =
+list(dash = "dash")) %>%
+  layout(title = "Produção de Leite no Paraná - Atual vs. Predito",
+         yaxis = list(title = "mil Litros"),
+         xaxis = list(title = "Ano"))
+```
+
+
+```{r}
+forecast_df_O <- data.frame('Ano'=c(2005:2016),
+                          'Real'=as.data.frame(teste_O),
+                          'Arima(0,2,0)'= forecast_arima120,
+                          'Holt' = fc_holt_O,
+                         'AutoML' = forecast_automl_O$pred_autoML)
+forecast_df_O <- forecast_df_O[,c(1,3,4,5,10)]
+forecast_df_O
+```
+
+
+Pode-se ver que nos primeiros anos (2005 e 2006) o modelo de rede neural foi melhor, mas depois há uma mudança no comportamento dos nossos dados e então outros modelos começam a fazer melhores previsões.
+
+
+Vamos calcular o erro quadrático médio para comparar o modelo ARIMA(1,2,0), o modelo de Holt e o melhor modelo do AutoML.
+
+
+
+```{r}
+mae_vec_O <- c()
+rmse_vec_O <- c()
+for(i in 3:5){
+  mae_vec_O[i-2] <- mae(forecast_df_O$Real.y, forecast_df_O[,i])
+  rmse_vec_O[i-2] <- rmse(forecast_df_O$Real.y, forecast_df_O[,i])
+}
+
+metricas_O <- data.frame(mae_vec_O, rmse_vec_O)
+rownames(metricas_O) <- c('ARIMA(1,2,0)','Holt','AutoML')
+colnames(metricas_O) <- c('MAE','RMSE')
+metricas_O
+```
+
+
+Podemos ver que o melhor modelo selecionado foi o modelo de Holt. Vale ressaltar que temos poucos dados para essa série temporal e que se houvesse mais dados, outros modelos poderiam ter se saído melhor.
+
+
+# Conclusão
+
+Neste trabalho focamos em duas séries temporais principais que são referentes às duas principais mesorregiões produtoras de leite no Paraná. Nossos dados são anuais e não apresentam sazonalidade.
+
+
+Podemos identificar que há uma mudança de comportamento em meados dos anos 90 em que a produção de leite destas regiões aumenta muito. Observando os gráficos pode-se notar que em 2015 e 2016 parece haver uma nova mudança de comportamento dos dados. O período de grande elevação da produção de leite coincide aproximadamente com a situação econômica do país e pode, possivelmente, estar relacionada a isto.
+
+
+Temos poucas observações sobre o comportamento mais recente e este apresenta forte tendência. Outro problema enfrentando é falta de dados mais atuais disponíveis para fazermos comparações.
+
+
+Devido à falta de sazonalidade e forte tendência, os modelos de médias móveis e de suavização exponencial não produziram bons resultados de previsão. Os melhores modelos foram ARIMA com duas diferenças, isto é ARIMA(p,2,q), o modelo de Holt e modelos de redes neurais selecionados por AutoML.
+
+
+Para diferentes séries teremos diferentes modelos ou modelos com diferentes parâmetros estimados. Observando os gráficos para os anos mais recentes vemos que pode haver uma nova mudança de comportamento das séries e, portanto, todos os modelos estimados podem eventualmente apresentar um desempenho não muito satisfatório se esse novo comportamento se confirmar.
+
+
+Esperamos que com os resultados apresentados com futuras melhorias possa embasar algumas decisões de políticas públicas regionais, beneficiando a população e os produtores de leite do Paraná.
+
+
+
+# Referências
+
+Alves, L. R., Ostapechen, L. A. P., Porcé, M., & Parré, J. L. (2020). Atividade leiteira no Paraná: uma análise espacial e econométrica. Redes, 25, 2432-2453. https://doi.org/10.17058/redes.v25i0.14974
+
+https://sindileiteparana.com.br/dados-do-setor/
+
+https://www.idrparana.pr.gov.br/Pagina/Bovinocultura-de-Leite
+
+http://www.ipeadata.gov.br/Default.aspx
+
